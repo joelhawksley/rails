@@ -220,15 +220,29 @@ module ActionView
             end
           end
         end
+
+        # Pre-run template handlers for all templates. This converts
+        # template source (e.g. ERB) into Ruby source strings and caches
+        # them on the UnboundTemplate. The handler output lives in
+        # memory pages that are shared across forked workers via
+        # copy-on-write, avoiding redundant parsing after fork.
+        ActionController::Base.view_paths.each do |resolver|
+          next unless resolver.is_a?(ActionView::FileSystemResolver)
+
+          resolver.built_unbound_templates.each do |unbound_template|
+            unbound_template.compile_handler!
+          end
+        end
       end
     end
 
     attr_reader :identifier, :handler
     attr_reader :variable, :format, :variant, :virtual_path
+    attr_writer :handler_compiled_code # :nodoc:
 
     NONE = Object.new
 
-    def initialize(source, identifier, handler, locals:, format: nil, variant: nil, virtual_path: nil)
+    def initialize(source, identifier, handler, locals:, format: nil, variant: nil, virtual_path: nil, handler_compiled_code: nil)
       @source            = source.dup
       @identifier        = identifier
       @handler           = handler
@@ -248,6 +262,7 @@ module ActionView
       @strict_locals     = NONE
       @strict_local_keys = nil
       @type              = nil
+      @handler_compiled_code = handler_compiled_code
     end
 
     # The locals this template has been or will be compiled for, or nil if this
@@ -480,8 +495,7 @@ module ActionView
       # frozen string literal.
       def compiled_source
         set_strict_locals = strict_locals!
-        source = encode!
-        code = @handler.call(self, source)
+        code = @handler_compiled_code || @handler.call(self, encode!)
 
         method_arguments =
           if set_strict_locals

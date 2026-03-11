@@ -127,6 +127,10 @@ module ActionView
       @unbound_templates.values.flatten.flat_map(&:built_templates)
     end
 
+    def built_unbound_templates # :nodoc:
+      @unbound_templates.values.flatten
+    end
+
     private
       def _find_all(name, prefix, partial, details, key, locals)
         requested_details = key || TemplateDetails::Requested.new(**details)

@@ -15,6 +15,21 @@ module ActionView
 
       @templates = Concurrent::Map.new(initial_capacity: 2)
       @write_lock = Mutex.new
+      @handler_compiled_code = nil
+    end
+
+    # Pre-run the template handler (e.g. ERB -> Ruby) and cache the
+    # resulting Ruby source string. This is intended to be called at
+    # boot, before forking, so the handler output lives in shared
+    # copy-on-write memory.
+    def compile_handler!
+      @handler_compiled_code ||= begin
+        template = bind_locals([])
+        source = template.send(:encode!)
+        code = template.handler.call(template, source)
+        template.handler_compiled_code = code
+        code
+      end
     end
 
     def bind_locals(locals)
@@ -56,7 +71,8 @@ module ActionView
           variant: variant&.to_s,
           virtual_path: @virtual_path,
 
-          locals: locals.map(&:to_s)
+          locals: locals.map(&:to_s),
+          handler_compiled_code: @handler_compiled_code
         )
       end
 

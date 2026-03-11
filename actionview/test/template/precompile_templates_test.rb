@@ -61,7 +61,7 @@ class PrecompileTemplatesTest < ActiveSupport::TestCase
 
     ActionView::Template.precompile!
 
-    # A template without strict locals should not be compiled
+    # A template without strict locals should not be compiled (module_eval)
     resolver = ActionController::Base.view_paths.paths.first
     details = { locale: [:en], formats: [:html], variants: [], handlers: [:erb] }
     key = ActionView::LookupContext::DetailsKey.details_cache_key(details)
@@ -71,5 +71,83 @@ class PrecompileTemplatesTest < ActiveSupport::TestCase
     template = templates.first
     assert_not template.instance_variable_get(:@compiled),
       "Expected non-strict-locals template NOT to be compiled by precompile!"
+  end
+
+  def test_precompile_caches_handler_output_for_all_templates
+    ActionView::Base.precompile_templates = true
+
+    ActionView::Template.precompile!
+
+    resolver = ActionController::Base.view_paths.paths.first
+
+    # Non-strict-locals template should have handler output cached
+    details = { locale: [:en], formats: [:html], variants: [], handlers: [:erb] }
+    key = ActionView::LookupContext::DetailsKey.details_cache_key(details)
+    templates = resolver.find_all("hello_world", "test", false, details, key, [])
+    assert_not_empty templates
+
+    template = templates.first
+    handler_code = template.instance_variable_get(:@handler_compiled_code)
+    assert_not_nil handler_code,
+      "Expected handler output to be cached for non-strict-locals template"
+    assert_includes handler_code, "Hello world!",
+      "Expected cached handler output to contain template content"
+  end
+
+  def test_precompile_caches_handler_output_for_strict_locals_templates
+    ActionView::Base.precompile_templates = true
+
+    ActionView::Template.precompile!
+
+    resolver = ActionController::Base.view_paths.paths.first
+    details = { locale: [:en], formats: [:html], variants: [], handlers: [:erb] }
+    key = ActionView::LookupContext::DetailsKey.details_cache_key(details)
+    templates = resolver.find_all("precompile_strict_locals", "test", false, details, key, [])
+    assert_not_empty templates
+
+    template = templates.first
+    handler_code = template.instance_variable_get(:@handler_compiled_code)
+    assert_not_nil handler_code,
+      "Expected handler output to be cached for strict-locals template"
+  end
+
+  def test_cached_handler_output_is_used_for_new_locals_variants
+    ActionView::Base.precompile_templates = true
+
+    ActionView::Template.precompile!
+
+    resolver = ActionController::Base.view_paths.paths.first
+    details = { locale: [:en], formats: [:html], variants: [], handlers: [:erb] }
+    key = ActionView::LookupContext::DetailsKey.details_cache_key(details)
+
+    # First lookup with empty locals (created during precompile!)
+    templates_empty = resolver.find_all("hello_world", "test", false, details, key, [])
+    cached_code = templates_empty.first.instance_variable_get(:@handler_compiled_code)
+
+    # Clear the resolver cache and re-populate to get new Template instances
+    resolver.clear_cache
+    ActionView::Template.precompile!
+
+    # New lookup with different locals — should still have cached handler code
+    templates_with_locals = resolver.find_all("hello_world", "test", false, details, key, [:foo])
+    new_template = templates_with_locals.first
+    assert_equal cached_code, new_template.instance_variable_get(:@handler_compiled_code),
+      "Expected new template with different locals to receive cached handler code"
+  end
+
+  def test_handler_output_not_cached_when_precompile_disabled
+    ActionView::Base.precompile_templates = false
+
+    ActionView::Template.precompile!
+
+    resolver = ActionController::Base.view_paths.paths.first
+    details = { locale: [:en], formats: [:html], variants: [], handlers: [:erb] }
+    key = ActionView::LookupContext::DetailsKey.details_cache_key(details)
+    templates = resolver.find_all("hello_world", "test", false, details, key, [])
+    assert_not_empty templates
+
+    template = templates.first
+    assert_nil template.instance_variable_get(:@handler_compiled_code),
+      "Expected handler output NOT to be cached when precompile_templates is false"
   end
 end
