@@ -30,6 +30,43 @@ module ActionView
       ActionController::Base.view_paths.map(&:clear_cache)
     end
 
+    def test_render_template_does_not_instrument_when_debug_events_unavailable
+      # With no reporter subscribers, the debug-only render_template listener
+      # and its render_start companion should be detached, so template renders
+      # don't pay for structured event instrumentation.
+      old_subscribers = ActiveSupport.event_reporter.subscribers.dup
+      ActiveSupport.event_reporter.subscribers.clear
+      ActiveSupport::StructuredEventSubscriber.sync_debug_events
+
+      assert_empty ActiveSupport::Notifications.notifier.listeners_for("render_template.action_view")
+    ensure
+      ActiveSupport.event_reporter.subscribers.push(*old_subscribers)
+      ActiveSupport::StructuredEventSubscriber.sync_debug_events
+    end
+
+    def test_render_template_reattaches_when_debug_mode_toggles
+      # Ensure a reporter subscriber is registered so the gate depends on
+      # debug_mode alone.
+      old_subscribers = ActiveSupport.event_reporter.subscribers.dup
+      recorder = Class.new { def emit(event); end }.new
+      ActiveSupport.event_reporter.subscribers.clear
+      ActiveSupport.event_reporter.subscribe(recorder)
+
+      old_debug_mode = ActiveSupport.event_reporter.debug_mode?
+      ActiveSupport.event_reporter.debug_mode = false
+      assert_empty ActiveSupport::Notifications.notifier.listeners_for("render_template.action_view"),
+        "no debug-mode subscription should be attached when debug_mode is off"
+
+      ActiveSupport.event_reporter.debug_mode = true
+      assert_not_empty ActiveSupport::Notifications.notifier.listeners_for("render_template.action_view"),
+        "debug-mode subscription should reattach when debug_mode is enabled"
+    ensure
+      ActiveSupport.event_reporter.debug_mode = old_debug_mode
+      ActiveSupport.event_reporter.subscribers.clear
+      ActiveSupport.event_reporter.subscribers.push(*old_subscribers)
+      ActiveSupport::StructuredEventSubscriber.sync_debug_events
+    end
+
     def test_render_template
       with_debug_event_reporting do
         assert_event_reported("action_view.render_start", payload: { identifier: "test/hello_world.erb", layout: nil }) do

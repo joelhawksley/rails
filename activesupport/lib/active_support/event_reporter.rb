@@ -300,9 +300,17 @@ module ActiveSupport
     # event emission, or when unexpected arguments are passed to `notify`.
     attr_writer :raise_on_error
 
-    attr_writer :debug_mode # :nodoc:
-
     attr_reader :subscribers # :nodoc
+
+    # Sets whether debug events should be reported. When this changes,
+    # any attached +ActiveSupport::StructuredEventSubscriber+ classes
+    # re-evaluate whether their debug-only Notifications subscriptions
+    # should be attached, so that non-debug apps don't pay the cost of
+    # instrumenting events that would be discarded.
+    def debug_mode=(value) # :nodoc:
+      @debug_mode = value
+      sync_structured_event_subscribers
+    end
 
     class << self
       # Filter parameters used to filter event payloads. If nil,
@@ -315,6 +323,7 @@ module ActiveSupport
 
     def initialize(*subscribers, raise_on_error: false)
       @subscribers = []
+      @with_debug_count = 0
       subscribers.each { |subscriber| subscribe(subscriber) }
       @debug_mode = true
       @raise_on_error = raise_on_error
@@ -350,6 +359,8 @@ module ActiveSupport
         raise ArgumentError, "Event subscriber #{subscriber.class.name} must respond to #emit"
       end
       @subscribers << { subscriber: subscriber, filter: filter }
+      sync_structured_event_subscribers
+      @subscribers
     end
 
     # Unregister an event subscriber. Accepts either a subscriber or a class.
@@ -364,6 +375,7 @@ module ActiveSupport
     # ```
     def unsubscribe(subscriber)
       @subscribers.delete_if { |s| subscriber === s[:subscriber] }
+      sync_structured_event_subscribers
     end
 
     # Reports an event to all registered subscribers. An event name and payload can be provided:
@@ -463,15 +475,30 @@ module ActiveSupport
     def with_debug
       prior = Fiber[:event_reporter_debug_mode]
       Fiber[:event_reporter_debug_mode] = true
+      @with_debug_count += 1
+      sync_structured_event_subscribers
       yield
     ensure
       Fiber[:event_reporter_debug_mode] = prior
+      @with_debug_count -= 1
+      sync_structured_event_subscribers
     end
 
     # Check if debug mode is currently enabled. Debug mode is enabled on the reporter
     # via `with_debug`, and in local environments.
     def debug_mode?
       @debug_mode || Fiber[:event_reporter_debug_mode]
+    end
+
+    # Returns true when debug-only structured events could actually reach a
+    # subscriber right now: at least one subscriber is registered, and debug
+    # mode is either enabled globally or by an in-flight +with_debug+ block.
+    # Used by +ActiveSupport::StructuredEventSubscriber+ to decide whether to
+    # attach or detach its debug-only +ActiveSupport::Notifications+ hooks,
+    # so that non-debug apps don't pay for instrumentation that would be
+    # discarded.
+    def debug_events_available? # :nodoc:
+      @subscribers.any? && (@debug_mode || @with_debug_count > 0)
     end
 
     # Report an event only when in debug mode. For example:
@@ -602,6 +629,12 @@ module ActiveSupport
     private
       def filter_parameters
         self.class.filter_parameters || ActiveSupport.filter_parameters
+      end
+
+      def sync_structured_event_subscribers
+        if defined?(ActiveSupport::StructuredEventSubscriber)
+          ActiveSupport::StructuredEventSubscriber.sync_debug_events
+        end
       end
 
       def raise_on_error?

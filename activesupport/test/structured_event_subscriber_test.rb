@@ -123,6 +123,86 @@ class StructuredEventSubscriberTest < ActiveSupport::TestCase
     assert_equal base_methods, ActiveSupport::StructuredEventSubscriber.debug_methods
   end
 
+  def test_debug_only_events_do_not_instrument_when_debug_events_unavailable
+    # With debug_mode off and no reporter subscribers, attaching should not
+    # register an ActiveSupport::Notifications listener for the debug-only
+    # event, so instrumenting it costs nothing.
+    old_subscribers = ActiveSupport.event_reporter.subscribers.dup
+    ActiveSupport.event_reporter.subscribers.clear
+
+    subscriber = TestSubscriber.new
+    TestSubscriber.attach_to :test, subscriber
+
+    listeners = ActiveSupport::Notifications.notifier.listeners_for("debug_only_event.test")
+    assert_empty listeners
+  ensure
+    TestSubscriber.detach_from :test
+    ActiveSupport.event_reporter.subscribers.push(*old_subscribers)
+  end
+
+  def test_toggling_debug_mode_attaches_and_detaches_debug_only_subscriptions
+    TestSubscriber.attach_to :test, @subscriber
+    event_reporter_subscriber = TestEventReporterSubscriber.new
+    ActiveSupport.event_reporter.subscribe(event_reporter_subscriber)
+
+    # setup left debug_mode = false, so the debug-only listener is detached.
+    assert_empty ActiveSupport::Notifications.notifier.listeners_for("debug_only_event.test")
+
+    ActiveSupport.event_reporter.debug_mode = true
+    assert_not_empty ActiveSupport::Notifications.notifier.listeners_for("debug_only_event.test"),
+      "enabling debug_mode should attach debug-only listeners"
+
+    ActiveSupport.event_reporter.debug_mode = false
+    assert_empty ActiveSupport::Notifications.notifier.listeners_for("debug_only_event.test"),
+      "disabling debug_mode should detach debug-only listeners"
+  ensure
+    ActiveSupport.event_reporter.unsubscribe(event_reporter_subscriber) if event_reporter_subscriber
+  end
+
+  def test_subscribing_and_unsubscribing_the_last_reporter_subscriber_attaches_and_detaches
+    # Clear reporter subscribers so we can observe the 0 → 1 → 0 transition.
+    old_subscribers = ActiveSupport.event_reporter.subscribers.dup
+    ActiveSupport.event_reporter.subscribers.clear
+
+    TestSubscriber.attach_to :test, @subscriber
+    ActiveSupport.event_reporter.debug_mode = true
+
+    assert_empty ActiveSupport::Notifications.notifier.listeners_for("debug_only_event.test"),
+      "no reporter subscribers should leave debug-only listeners detached even in debug_mode"
+
+    event_reporter_subscriber = TestEventReporterSubscriber.new
+    ActiveSupport.event_reporter.subscribe(event_reporter_subscriber)
+
+    assert_not_empty ActiveSupport::Notifications.notifier.listeners_for("debug_only_event.test"),
+      "adding a reporter subscriber should attach debug-only listeners"
+
+    ActiveSupport.event_reporter.unsubscribe(event_reporter_subscriber)
+
+    assert_empty ActiveSupport::Notifications.notifier.listeners_for("debug_only_event.test"),
+      "removing the last reporter subscriber should detach debug-only listeners"
+  ensure
+    ActiveSupport.event_reporter.subscribers.push(*old_subscribers)
+  end
+
+  def test_with_debug_attaches_debug_only_subscriptions_for_the_block
+    TestSubscriber.attach_to :test, @subscriber
+    event_reporter_subscriber = TestEventReporterSubscriber.new
+    ActiveSupport.event_reporter.subscribe(event_reporter_subscriber)
+
+    assert_empty ActiveSupport::Notifications.notifier.listeners_for("debug_only_event.test")
+
+    inside_listeners = nil
+    ActiveSupport.event_reporter.with_debug do
+      inside_listeners = ActiveSupport::Notifications.notifier.listeners_for("debug_only_event.test")
+    end
+
+    assert_not_empty inside_listeners, "with_debug should attach debug-only listeners for the block"
+    assert_empty ActiveSupport::Notifications.notifier.listeners_for("debug_only_event.test"),
+      "with_debug should detach debug-only listeners after the block"
+  ensure
+    ActiveSupport.event_reporter.unsubscribe(event_reporter_subscriber) if event_reporter_subscriber
+  end
+
   def test_no_event_reporter_subscribers
     ActiveSupport::StructuredEventSubscriber.attach_to :test, @subscriber
 

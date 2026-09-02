@@ -98,10 +98,9 @@ module ActionView
     end
 
     def self.attach_to(*)
-      ActiveSupport::Notifications.subscribe("render_template.action_view", Start.new)
-      ActiveSupport::Notifications.subscribe("render_layout.action_view", Start.new)
-
       super
+      attach_debug_notifications("render_template.action_view", Start.new)
+      attach_debug_notifications("render_layout.action_view", Start.new)
     end
   end
 end

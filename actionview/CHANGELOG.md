@@ -1,3 +1,20 @@
+*   Stop instrumenting `render_template`, `render_partial`, `render_collection`,
+    and `render_layout` `action_view` notifications when no structured-event
+    subscriber would consume them.
+
+    `ActionView::StructuredEventSubscriber` subscribed to these events at boot
+    even in non-debug apps, so every render still paid to allocate and dispatch
+    the notification only for the subscriber to discard it. In view-heavy
+    production apps this eliminates ~115 allocations and ~90µs per render,
+    dropping full-page allocations ~16% and improving throughput ~15% (#57781).
+
+    Debug-only structured-event subscriptions and the monotonic `Start`
+    listeners are now attached only while a subscriber to
+    `Rails.event` is present and debug mode is active, and are attached or
+    detached automatically as those conditions change.
+
+    *Joel Hawksley*
+
 *   Allow `translate`'s (and `t`'s) `scope:` option to be resolved relative to
     the current template when it starts with a period, mirroring the existing
     behavior for the key argument.

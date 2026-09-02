@@ -1,3 +1,22 @@
+*   Avoid instrumenting `ActiveSupport::StructuredEventSubscriber` debug-only
+    events when no subscriber would consume them.
+
+    `debug_only` structured events were subscribed to `ActiveSupport::Notifications`
+    unconditionally at boot, even though the subscriber discarded them unless
+    the event reporter was in debug mode. The `ActiveSupport::Notifications.instrument`
+    call still paid to allocate and dispatch the event. This was measurable
+    in view-heavy production apps (see #57781).
+
+    Debug-only structured subscriptions are now attached only while the event
+    reporter has at least one subscriber and debug mode is active
+    (`config.log_level = :debug`, `Rails.event.debug_mode = true`, or an
+    in-flight `Rails.event.with_debug` block), and are detached automatically
+    when those conditions no longer hold. `ActiveSupport::StructuredEventSubscriber`
+    also exposes `attach_debug_notifications` for subclasses that need their
+    own `Notifications` subscribers to follow the same gating.
+
+    *Joel Hawksley*
+
 *   Return a UTC time from `Time.rfc3339` for strings with the "Z" UTC designator.
 
     ```ruby
